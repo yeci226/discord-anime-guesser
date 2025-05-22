@@ -1,0 +1,20 @@
+# pkg
+node_modules
+
+# installers
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+run.bat
+json.sqlite
+runner.log
+yarn-error.log
+
+.VSCodeCounter/
+
+# env
+.env
+.env.*
+env.development
+env.production
+*.tmp
