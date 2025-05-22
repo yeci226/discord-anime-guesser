@@ -4,7 +4,10 @@ import {
 	// getCharacterDetails,
 	// getCharactersBySubjectId
 } from "./bangumi.js";
+import { Logger } from "./logger.js";
 import { idToTags } from "./id_tags.js";
+
+const logger = new Logger("角色");
 
 const gameSettings = {
 	startYear: new Date().getFullYear() - 20, // 開始年份
@@ -42,6 +45,8 @@ export async function getNewCharacter(guildId) {
 			id => idToTags[id] || id
 		);
 	}
+
+	logger.info(`新題目已生成角色名稱: ${character.name}`);
 
 	guildCache.set(guildId, character);
 	return character;

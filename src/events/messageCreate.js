@@ -1,5 +1,12 @@
 import { client } from "../index.js";
-import { ChannelType, Events } from "discord.js";
+import {
+	ChannelType,
+	Events,
+	EmbedBuilder,
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle
+} from "discord.js";
 import { Logger } from "../utils/logger.js";
 import { getResponse } from "../utils/getResponse.js";
 import {
@@ -70,10 +77,14 @@ client.on(Events.MessageCreate, async message => {
 		// 獲取或創建對話
 		let conversation;
 
-		// 如果是直接提及並要求開始遊戲，則始終創建新遊戲
+		// 如果是直接提及並要求開始遊戲，則創建新遊戲（僅在沒有進行中的遊戲時）
 		if (isDirectMention && message.guild) {
 			// 創建新對話
 			conversation = getOrCreateConversation(message.author.id);
+			channelGameStates.set(message.channel.id, {
+				conversationId: conversation.conversationId,
+				hintLevel: 0
+			});
 
 			const guildId = message.guild.id;
 			const character = await getNewCharacter(guildId);
@@ -97,12 +108,6 @@ client.on(Events.MessageCreate, async message => {
 				message.author.id,
 				message.reference.messageId
 			);
-
-			// 如果是回覆且處於遊戲模式，繼續遊戲
-			if (conversation.character) {
-				// 直接繼續使用現有的遊戲對話
-				logger.info(`繼續對話: ${conversation.conversationId}`);
-			}
 		} else {
 			// 如果是新消息且不是開始遊戲命令，創建新的普通對話
 			conversation = getOrCreateConversation(message.author.id);
@@ -110,9 +115,6 @@ client.on(Events.MessageCreate, async message => {
 
 		// 處理新的遊戲開始（非直接提及的情況）
 		if (!isDirectMention && message.guild) {
-			logger.info(
-				`[${message.author.username} #${conversation.conversationId}] 透過回覆開始遊戲`
-			);
 			const guildId = message.guild.id;
 			const character = await getCharacter(guildId);
 			if (!character) {
@@ -121,6 +123,10 @@ client.on(Events.MessageCreate, async message => {
 
 			// 構建角色扮演的系統提示
 			const characterPrompt = getCharacterPrompt(character);
+			channelGameStates.set(message.channel.id, {
+				conversationId: conversation.conversationId,
+				hintLevel: 0
+			});
 
 			// 設置遊戲模式
 			conversation.messages = [];
@@ -139,16 +145,20 @@ client.on(Events.MessageCreate, async message => {
 
 		// 檢查是否為猜測 - 移到這裡，确保在常规处理之前检查
 		if (conversation.character) {
-			logger.info(
-				`正在檢查猜測 [${message.author.username} #${conversation.conversationId}]: "${prompt}" 對於角色: ${conversation.character.nameCn || conversation.character.name}`
-			);
-
 			if (isCorrectGuess(prompt, conversation.character)) {
 				const characterName =
 					conversation.character.nameCn ||
 					conversation.character.name;
 				await reply.edit({
-					content: `🎉 恭喜你猜對了！我是 ${characterName}！`
+					content: "",
+					embeds: [
+						new EmbedBuilder()
+							.setColor("Random")
+							.setTitle(
+								`🎉 恭喜你猜對了！我是 ${characterName}！`
+							)
+							.setImage(conversation.character.image || null)
+					]
 				});
 
 				// 清理遊戲狀態
@@ -231,7 +241,6 @@ ${appearanceDisplay}- 相關標籤：${character.rawTags ? [...character.rawTags
 
 請使用角色語氣回答，不能洩露你的名字，直到使用者猜中。並且使用繁體中文回答。`;
 
-	logger.info(characterPrompt);
 	return characterPrompt;
 }
 
@@ -239,7 +248,7 @@ ${appearanceDisplay}- 相關標籤：${character.rawTags ? [...character.rawTags
 async function handleHintRequest(message, reply, character) {
 	const channelId = message.channel.id;
 	let gameState = channelGameStates.get(channelId) || { hintLevel: 0 };
-	gameState.hintLevel = (gameState.hintLevel || 0) + 1;
+	gameState.hintLevel = Math.min(gameState.hintLevel + 1, 4);
 	channelGameStates.set(channelId, gameState);
 
 	let hintMessage = "🔍 **角色提示**\n\n";
@@ -320,30 +329,18 @@ function normalizeText(text) {
 }
 
 function isCorrectGuess(messageText, character) {
-	// 記錄原始角色信息
-	logger.info(`角色名稱檢查開始：`);
-	logger.info(`- 角色英文名: ${character.name || "無"}`);
-	logger.info(`- 角色中文名: ${character.nameCn || "無"}`);
-	logger.info(`- 角色別名: ${(character.aliases || []).join(", ") || "無"}`);
-
 	// 先將輸入文本轉換為小寫並清理
 	const userInput = normalizeText(messageText);
-
-	// 記錄用戶輸入，方便調試
-	logger.info(`用戶猜測輸入: "${messageText}" -> 標準化後: "${userInput}"`);
 
 	// 優先處理"你是XX"的情況
 	const youArePattern =
 		/^(你是|你就是|猜你是|你應該是|你应该是|你可能是|你会是|你不是|你會是|是不是).+/i;
 	if (youArePattern.test(messageText)) {
-		logger.info(`檢測到"你是XX"格式的猜測`);
-
 		// 從"你是XX"中提取名字部分
 		const nameOnly = messageText.replace(
 			/^(你是|你就是|猜你是|你應該是|你应该是|你可能是|你会是|你不是|你會是|是不是)\s*/i,
 			""
 		);
-		logger.info(`提取的名字部分: "${nameOnly}"`);
 
 		// 標準化提取的名字
 		const normalizedNameOnly = normalizeText(nameOnly);
@@ -366,9 +363,6 @@ function isCorrectGuess(messageText, character) {
 				(normalizedNameOnly === name ||
 					normalizedNameOnly.includes(name))
 			) {
-				logger.info(
-					`✓ "你是XX"匹配成功: "${normalizedNameOnly}" 包含 "${name}"`
-				);
 				return true;
 			}
 		}
@@ -431,14 +425,9 @@ function isCorrectGuess(messageText, character) {
 	// 轉換回數組並標準化所有名稱
 	const normalizedNames = [...nameVariants].map(name => normalizeText(name));
 
-	// 記錄角色可能的名稱，方便調試
-	logger.info(`角色名稱變體: ${[...nameVariants].join(", ")}`);
-	logger.info(`標準化後的名稱: ${normalizedNames.join(", ")}`);
-
 	// 檢查用戶輸入是否完全匹配任何名稱
 	for (const name of normalizedNames) {
 		if (userInput === name) {
-			logger.info(`✓ 完全匹配: "${userInput}" === "${name}"`);
 			return true;
 		}
 	}
@@ -448,12 +437,10 @@ function isCorrectGuess(messageText, character) {
 		if (name.length <= 1) continue; // 跳過單字符名稱，避免誤判
 
 		if (userInput.startsWith(name)) {
-			logger.info(`✓ 開頭匹配: "${userInput}" 以 "${name}" 開頭`);
 			return true;
 		}
 
 		if (userInput.endsWith(name)) {
-			logger.info(`✓ 結尾匹配: "${userInput}" 以 "${name}" 結尾`);
 			return true;
 		}
 	}
@@ -463,7 +450,6 @@ function isCorrectGuess(messageText, character) {
 		if (name.length <= 1) continue; // 跳過單字符名稱，避免誤判
 
 		if (userInput.includes(name)) {
-			logger.info(`✓ 包含完整名稱: "${userInput}" 包含 "${name}"`);
 			return true;
 		}
 	}
@@ -491,7 +477,6 @@ function isCorrectGuess(messageText, character) {
 	for (const keyword of guessKeywords) {
 		if (userInput.includes(normalizeText(keyword))) {
 			hasGuessKeyword = true;
-			logger.info(`找到猜測關鍵詞: "${keyword}"`);
 			break;
 		}
 	}
@@ -502,9 +487,6 @@ function isCorrectGuess(messageText, character) {
 		for (const name of normalizedNames) {
 			if (name.length <= 1) continue;
 			if (userInput.includes(name)) {
-				logger.info(
-					`✓ 猜測關鍵詞 + 名稱匹配: "${userInput}" 包含 "${name}"`
-				);
 				return true;
 			}
 		}
@@ -522,14 +504,10 @@ function isCorrectGuess(messageText, character) {
 			// 如果匹配了超過一半的字符，視為部分匹配
 			const matchRatio = matchedChars / name.length;
 			if (matchRatio > 0.5) {
-				logger.info(
-					`✓ 猜測關鍵詞 + 部分名稱匹配: 匹配率 ${(matchRatio * 100).toFixed(1)}% > 50%`
-				);
 				return true;
 			}
 		}
 	}
 
-	logger.info(`✗ 沒有匹配`);
 	return false;
 }

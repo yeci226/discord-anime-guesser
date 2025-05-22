@@ -1,7 +1,7 @@
 import { Logger } from "./logger.js";
 import { GoogleGenAI } from "@google/genai";
 const cooldowns = new Map();
-const cooldownTime = 5000; // 5秒冷卻時間
+const cooldownTime = 10000; // 10秒冷卻時間
 
 const ai = new GoogleGenAI({
 	apiKey: process.env.GOOGLE_API_KEY
@@ -11,7 +11,7 @@ export const getResponse = async (message, conversation = null) => {
 	try {
 		const cooldownRemaining = isOnCooldown(message);
 		if (cooldownRemaining) {
-			return `⚠️ 請等待 ${cooldownRemaining} 秒後再試`;
+			return `⚠️ 請等待 ${cooldownRemaining} 再試`;
 		}
 
 		setCooldown(message.author.id);
