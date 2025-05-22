@@ -38,7 +38,7 @@ export const getResponse = async (message, conversation = null) => {
 		}
 
 		const response = await ai.models.generateContent({
-			model: "gemini-2.0-flash",
+			model: "gemini-2.0-flash-lite",
 			contents,
 			generationConfig: {
 				maxOutputTokens: 1024
