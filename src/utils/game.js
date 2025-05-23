@@ -46,7 +46,9 @@ export async function getNewCharacter(guildId) {
 		);
 	}
 
-	logger.info(`新題目已生成角色名稱: ${character.name}`);
+	logger.info(
+		`新題目已生成角色名稱: ${character.name}${character.nameCn ? `（${character.nameCn}）` : ""}`
+	);
 
 	guildCache.set(guildId, character);
 	return character;
