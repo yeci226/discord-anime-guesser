@@ -76,7 +76,7 @@ client.on(Events.MessageCreate, async message => {
 		const gameState = guildGameStates.get(message.guild.id);
 		if (gameState && gameState.conversationId) {
 			await message.reply(
-				"⚠️ 本頻道已有進行中的題目，請先完成或跳過再開新題目。"
+				"⚠️ 已有進行中的題目，請先完成或跳過再開新題目，可以透過回覆這則訊息「skip」跳過題目"
 			);
 			return;
 		}
@@ -94,7 +94,6 @@ client.on(Events.MessageCreate, async message => {
 		});
 
 		const skipCommands = [
-			"s",
 			"skip",
 			"giveup",
 			"跳過",
@@ -169,9 +168,7 @@ client.on(Events.MessageCreate, async message => {
 				embeds: [
 					new EmbedBuilder()
 						.setColor("Random")
-						.setTitle(
-							`已跳過當前題目，這個角色是：${characterName}`
-						)
+						.setTitle(`已跳過當前題目，我是：${characterName}！`)
 						.setFooter({
 							text: `🎯 有 ${correctPercentage}%(${guessedCount}/${appearanceCount}) 的玩家猜對這個角色！`
 						})
@@ -219,11 +216,9 @@ client.on(Events.MessageCreate, async message => {
 				embeds: [
 					new EmbedBuilder()
 						.setColor("Random")
-						.setTitle(
-							`已跳過當前題目，這個角色是：${characterName}`
-						)
+						.setTitle(`🎉 恭喜猜中！我是：${characterName}！`)
 						.setFooter({
-							text: `🎯 有 ${correctPercentage}%(${guessedCount}/${appearanceCount}) 的玩家猜對這個角色！`
+							text: `🎯 有 ${correctPercentage}%(${guessedCount + 1}/${appearanceCount}) 的玩家猜對這個角色！`
 						})
 						.setImage(conversation.character.image || null)
 				]
@@ -231,6 +226,7 @@ client.on(Events.MessageCreate, async message => {
 			conversation.messages = [];
 			conversation.character = null;
 			guildGameStates.delete(message.guild.id);
+			await db.set(`${characterId}_guessed`, guessedCount + 1);
 			logger.info(
 				`[${message.author.username} #${conversation.conversationId}] 成功猜中角色: ${characterName}`
 			);
