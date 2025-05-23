@@ -1,12 +1,5 @@
 import { client } from "../index.js";
-import {
-	ChannelType,
-	Events,
-	EmbedBuilder,
-	ActionRowBuilder,
-	ButtonBuilder,
-	ButtonStyle
-} from "discord.js";
+import { ChannelType, Events, EmbedBuilder } from "discord.js";
 import { Logger } from "../utils/logger.js";
 import { getResponse } from "../utils/getResponse.js";
 import {
@@ -15,11 +8,42 @@ import {
 } from "../utils/conversationManager.js";
 import { getCharacter, getNewCharacter } from "../utils/game.js";
 import { idToTags } from "../utils/id_tags.js";
+import { QuickDB } from "quick.db";
 
+const db = new QuickDB();
 const logger = new Logger("訊息");
 
 // 存儲每個頻道的遊戲狀態，包括提示級別
-const channelGameStates = new Map();
+const guildGameStates = new Map();
+
+// 遊戲初始化工具函數
+async function initGameConversation({
+	message,
+	conversation,
+	isDirectMention,
+	reply
+}) {
+	const guildId = message.guild.id;
+	const character = isDirectMention
+		? await getNewCharacter(guildId)
+		: await getCharacter(guildId);
+	if (!character) {
+		await reply.edit("⚠️ 無法獲取角色資料，請稍後再試。");
+		return null;
+	}
+	const characterPrompt = getCharacterPrompt(character);
+	guildGameStates.set(message.guild.id, {
+		conversationId: conversation.conversationId,
+		hintLevel: 0
+	});
+	conversation.messages = [];
+	conversation.messages.unshift({
+		role: "system",
+		text: characterPrompt
+	});
+	conversation.character = character;
+	return character;
+}
 
 // 主事件處理器
 client.on(Events.MessageCreate, async message => {
@@ -49,148 +73,180 @@ client.on(Events.MessageCreate, async message => {
 		}
 	}
 
-	try {
-		// 獲取提示內容
-		let prompt;
-		if (isDirectMention) {
-			prompt = message.content.replace(prefix, "").trim();
-		} else {
-			prompt = message.content.trim();
+	if (isDirectMention && message.guild) {
+		const gameState = guildGameStates.get(message.guild.id);
+		if (gameState && gameState.conversationId) {
+			await message.reply(
+				"⚠️ 本頻道已有進行中的題目，請先完成或跳過再開新題目。"
+			);
+			return;
 		}
+	}
 
+	try {
+		let prompt = isDirectMention
+			? message.content.replace(prefix, "").trim()
+			: message.content.trim();
 		if (!prompt || prompt.length > 1000) return;
 
 		logger.info(`接收訊息 [${message.author.username}]: ${prompt}`);
-
 		const reply = await message.reply({
 			content: "<a:Prints_dark:1373977594147508344> 正在思考..."
 		});
 
-		// 創建一個符合 getResponse 所需的消息對象
+		const skipCommands = [
+			"s",
+			"skip",
+			"giveup",
+			"跳過",
+			"放棄",
+			"放弃",
+			"換一個",
+			"换一个"
+		];
 		const messageObj = {
 			content: prompt,
-			author: {
-				id: message.author.id
-			}
+			author: { id: message.author.id }
 		};
-
-		// 獲取或創建對話
 		let conversation;
 
-		// 如果是直接提及並要求開始遊戲，則創建新遊戲（僅在沒有進行中的遊戲時）
 		if (isDirectMention && message.guild) {
-			// 創建新對話
 			conversation = getOrCreateConversation(message.author.id);
-			channelGameStates.set(message.channel.id, {
-				conversationId: conversation.conversationId,
-				hintLevel: 0
+			const character = await initGameConversation({
+				message,
+				conversation,
+				isDirectMention,
+				reply
 			});
-
-			const guildId = message.guild.id;
-			const character = await getNewCharacter(guildId);
-			if (!character) {
-				return await reply.edit("⚠️ 無法獲取角色資料，請稍後再試。");
-			}
-
-			// 構建角色扮演的系統提示
-			const characterPrompt = getCharacterPrompt(character);
-
-			// 設置遊戲模式
-			conversation.messages = [];
-			conversation.messages.unshift({
-				role: "system",
-				text: characterPrompt
-			});
-			conversation.character = character;
+			if (!character) return;
 		} else if (isReply) {
-			// 如果是回覆，嘗試繼續同一個對話
 			conversation = getOrCreateConversation(
 				message.author.id,
 				message.reference.messageId
 			);
 		} else {
-			// 如果是新消息且不是開始遊戲命令，創建新的普通對話
 			conversation = getOrCreateConversation(message.author.id);
 		}
 
-		// 處理新的遊戲開始（非直接提及的情況）
-		if (!isDirectMention && message.guild) {
-			const guildId = message.guild.id;
-			const character = await getCharacter(guildId);
-			if (!character) {
-				return await reply.edit("⚠️ 無法獲取角色資料，請稍後再試。");
-			}
-
-			// 構建角色扮演的系統提示
-			const characterPrompt = getCharacterPrompt(character);
-			channelGameStates.set(message.channel.id, {
-				conversationId: conversation.conversationId,
-				hintLevel: 0
+		// 非直接提及但有 guild，且未初始化角色
+		if (!isDirectMention && message.guild && !conversation.character) {
+			const character = await initGameConversation({
+				message,
+				conversation,
+				isDirectMention: false,
+				reply
 			});
-
-			// 設置遊戲模式
-			conversation.messages = [];
-			conversation.messages.unshift({
-				role: "system",
-				text: characterPrompt
-			});
-			conversation.character = character;
+			if (!character) return;
 		}
 
-		// 檢查是否是提示請求
+		// Track character appearance count
+		if (conversation.character) {
+			const characterId = conversation.character.id;
+			const appearanceCount =
+				(await db.get(`${characterId}_appearances`)) || 0;
+			await db.set(`${characterId}_appearances`, appearanceCount + 1);
+		}
+
+		// 處理跳過命令
+		if (
+			skipCommands.includes(prompt.toLowerCase()) &&
+			conversation.character
+		) {
+			const characterName =
+				conversation.character.nameCn || conversation.character.name;
+			const characterId = conversation.character.id;
+
+			// 從資料庫取得猜對次數與出現次數
+			const guessedCount = (await db.get(`${characterId}_guessed`)) || 0;
+			const appearanceCount =
+				(await db.get(`${characterId}_appearances`)) || 1;
+
+			const correctPercentage = Math.round(
+				(guessedCount / appearanceCount) * 100
+			);
+
+			await reply.edit({
+				content: "",
+				embeds: [
+					new EmbedBuilder()
+						.setColor("Random")
+						.setTitle(
+							`已跳過當前題目，這個角色是：${characterName}`
+						)
+						.setFooter({
+							text: `🎯 有 ${correctPercentage}%(${guessedCount}/${appearanceCount}) 的玩家猜對這個角色！`
+						})
+						.setImage(conversation.character.image || null)
+				]
+			});
+
+			conversation.messages = [];
+			conversation.character = null;
+			guildGameStates.delete(message.guild.id);
+			return;
+			``;
+		}
+
+		// 處理提示請求
 		if (prompt.toLowerCase() === "提示" && conversation.character) {
 			await handleHintRequest(message, reply, conversation.character);
-			return; // 處理完提示請求後直接返回
+			return;
 		}
 
-		// 檢查是否為猜測 - 移到這裡，确保在常规处理之前检查
-		if (conversation.character) {
-			if (isCorrectGuess(prompt, conversation.character)) {
-				const characterName =
-					conversation.character.nameCn ||
-					conversation.character.name;
-				await reply.edit({
-					content: "",
-					embeds: [
-						new EmbedBuilder()
-							.setColor("Random")
-							.setTitle(
-								`🎉 恭喜你猜對了！我是 ${characterName}！`
-							)
-							.setImage(conversation.character.image || null)
-					]
-				});
-
-				// 清理遊戲狀態
-				conversation.messages = [];
-				conversation.character = null;
-
-				// 清理該頻道的提示狀態
-				channelGameStates.delete(message.channel.id);
-
-				// 記錄成功猜測
-				logger.info(
-					`[${message.author.username} #${conversation.conversationId}] 成功猜中角色: ${characterName}`
-				);
-
-				return; // 🛑 結束後不再呼叫 Gemini
+		// 處理猜測
+		if (
+			conversation.character &&
+			isCorrectGuess(prompt, conversation.character)
+		) {
+			const gameState = guildGameStates.get(message.guild.id);
+			if (gameState && gameState.isSolved) {
+				await reply.edit("⚠️ 本題已被其他玩家猜中，請等待下一題！");
+				return;
 			}
+			if (gameState) gameState.isSolved = true;
+
+			const characterName =
+				conversation.character.nameCn || conversation.character.name;
+			const characterId = conversation.character.id;
+			const guessedCount = (await db.get(`${characterId}_guessed`)) || 0;
+			const appearanceCount =
+				(await db.get(`${characterId}_appearances`)) || 1;
+			const correctPercentage = Math.round(
+				(guessedCount / appearanceCount) * 100
+			);
+
+			await reply.edit({
+				content: "",
+				embeds: [
+					new EmbedBuilder()
+						.setColor("Random")
+						.setTitle(
+							`已跳過當前題目，這個角色是：${characterName}`
+						)
+						.setFooter({
+							text: `🎯 有 ${correctPercentage}%(${guessedCount}/${appearanceCount}) 的玩家猜對這個角色！`
+						})
+						.setImage(conversation.character.image || null)
+				]
+			});
+			conversation.messages = [];
+			conversation.character = null;
+			guildGameStates.delete(message.guild.id);
+			logger.info(
+				`[${message.author.username} #${conversation.conversationId}] 成功猜中角色: ${characterName}`
+			);
+			return;
 		}
 
-		// 獲取回應
+		// 一般回應
 		const response = await getResponse(messageObj, conversation);
 		if (!response) {
-			return await reply.edit("⚠️ 無法生成回應");
+			await reply.edit("⚠️ 無法生成回應");
+			return;
 		}
-
-		// 保存對話
 		saveConversation(reply.id, conversation);
-
-		const responseWithId = `-# #${conversation.conversationId} | 我現在正在扮演一位角色，猜猜我是誰？你可以透過使用「回覆」向我提問和猜測，但我不會直接告訴你我的名字，也可以輸入「提示」獲取提示\n${response}`;
-
-		await reply.edit({
-			content: responseWithId
-		});
+		const responseWithId = `-# #${conversation.conversationId} 我扮演了一位角色。你能猜出我是誰嗎？用「回覆」來問問題或直接猜！輸入「提示」拿線索，「skip」跳過。\n${response}`;
+		await reply.edit({ content: responseWithId });
 	} catch (error) {
 		console.log(error);
 		logger.error(
@@ -246,71 +302,108 @@ ${appearanceDisplay}- 相關標籤：${character.rawTags ? [...character.rawTags
 
 // 處理提示請求
 async function handleHintRequest(message, reply, character) {
-	const channelId = message.channel.id;
-	let gameState = channelGameStates.get(channelId) || { hintLevel: 0 };
+	const guildId = message.guild.id;
+	let gameState = guildGameStates.get(guildId) || { hintLevel: 0 };
 	gameState.hintLevel = Math.min(gameState.hintLevel + 1, 5);
-	channelGameStates.set(channelId, gameState);
+	guildGameStates.set(guildId, gameState);
 
 	let hintMessage = "🔍 **角色提示**\n\n";
 
+	// 工具：隨機取n個元素
+	function pickRandom(arr, n) {
+		if (!Array.isArray(arr) || arr.length === 0) return [];
+		const shuffled = arr.slice().sort(() => 0.5 - Math.random());
+		return shuffled.slice(0, Math.min(n, arr.length));
+	}
+
 	switch (gameState.hintLevel) {
 		case 1:
-			// 第一級提示：提供出現年份
-			hintMessage += `- 我出現的年份是：${character.earliestAppearance} - ${character.latestAppearance}\n`;
+			// 第一級提示：隨機選一個年份或作品
+			if (
+				character.appearances &&
+				character.appearances.length > 0 &&
+				Math.random() < 0.5
+			) {
+				const work = pickRandom(character.appearances, 1)[0];
+				hintMessage += `- 我出現在作品：${work}\n`;
+			} else {
+				hintMessage += `- 我出現的年份是：${character.earliestAppearance} - ${character.latestAppearance}\n`;
+			}
 			break;
 		case 2:
-			// 第二級提示：提供外觀特徵和作品名的一部分
+			// 第二級提示：隨機外觀特徵
 			if (character.appearanceIds && character.appearanceIds.length > 0) {
 				const validAppearances = character.appearanceIds
-					.filter(id => {
-						// 检查是否为字符串类型的标签
-						if (typeof id === "string" && !/^\d+$/.test(id))
-							return true;
-
-						// 检查是否存在对应的标签数组
-						return (
-							idToTags[id] &&
-							Array.isArray(idToTags[id]) &&
-							idToTags[id].length > 0
-						);
-					})
-					.map(id => {
-						// 如果是字符串直接返回
-						if (typeof id === "string" && !/^\d+$/.test(id))
-							return id;
-
-						// 从标签数组中返回第一个标签
-						return idToTags[id] && Array.isArray(idToTags[id])
-							? idToTags[id][0]
-							: "";
-					})
-					.filter(tag => tag && tag.length > 0); // 过滤掉空标签
-
-				if (validAppearances.length > 0) {
-					hintMessage += `- 我的外觀特徵包括：${validAppearances.slice(0, 3).join("、")}\n`;
+					.map(id =>
+						typeof id === "string" && !/^\d+$/.test(id)
+							? id
+							: idToTags[id] && Array.isArray(idToTags[id])
+								? idToTags[id][0]
+								: idToTags[id]
+					)
+					.filter(tag => tag && tag.length > 0);
+				const randomAppearances = pickRandom(
+					validAppearances,
+					2 + Math.floor(Math.random() * 2)
+				);
+				if (randomAppearances.length > 0) {
+					hintMessage += `- 我的外觀特徵包括：${randomAppearances.join("、")}\n`;
 				}
 			}
 			break;
-		case 3: // 第三級提示：提供角色性別
-			if (character.gender) {
+		case 3:
+			// 第三級提示：性別或標籤
+			if (character.gender && Math.random() < 0.5) {
 				hintMessage += `- 我的性別是 ${character.gender}\n`;
-			}
-		case 4: // 第四級提示：提供標籤
-			if (character.rawTags && character.rawTags.size > 0) {
+			} else if (character.rawTags && character.rawTags.size > 0) {
 				const tags = [...character.rawTags.keys()];
-				const randomTags = tags
-					.sort(() => 0.5 - Math.random())
-					.slice(0, Math.min(3, tags.length));
+				const randomTags = pickRandom(
+					tags,
+					2 + Math.floor(Math.random() * 2)
+				);
 				hintMessage += `- 與我相關的標籤有：${randomTags.join("、")}\n`;
 			}
+			break;
+		case 4:
+			// 第四級提示：標籤或聲優
+			if (
+				character.rawTags &&
+				character.rawTags.size > 0 &&
+				Math.random() < 0.5
+			) {
+				const tags = [...character.rawTags.keys()];
+				const randomTags = pickRandom(
+					tags,
+					2 + Math.floor(Math.random() * 2)
+				);
+				hintMessage += `- 與我相關的標籤有：${randomTags.join("、")}\n`;
+			} else if (character.animeVAs && character.animeVAs.length > 0) {
+				const vas = pickRandom(
+					character.animeVAs,
+					1 + Math.floor(Math.random() * 2)
+				);
+				hintMessage += `- 我的聲優有：${vas.join("、")}\n`;
+			}
+			break;
 		case 5:
-			// 第五級提示：提供聲優
-			hintMessage += `- 我的聲優是：${character.animeVAs.join("、")}\n`;
+			// 第五級提示：聲優或名字首字
+			if (
+				character.animeVAs &&
+				character.animeVAs.length > 0 &&
+				Math.random() < 0.7
+			) {
+				const vas = pickRandom(
+					character.animeVAs,
+					1 + Math.floor(Math.random() * 2)
+				);
+				hintMessage += `- 我的聲優有：${vas.join("、")}\n`;
+			}
+			// 額外加一個名字首字
+			hintMessage += `- 我的名字第一個字是：${(character.nameCn || character.name).charAt(0)}\n`;
 			break;
 		default:
 			// 超過五級提示，提供更明確的線索
 			hintMessage += `- 我的名字第一個字是：${(character.nameCn || character.name).charAt(0)}\n`;
-
 			if (character.summary) {
 				const briefSummary = character.summary.substring(0, 100);
 				hintMessage += `- 我的簡介開頭：${briefSummary}...\n`;
