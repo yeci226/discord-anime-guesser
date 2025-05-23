@@ -1,11 +1,11 @@
 import { Logger } from "./logger.js";
-import { GoogleGenAI } from "@google/genai";
+// import { GoogleGenAI } from "@google/genai";
 const cooldowns = new Map();
 const cooldownTime = 10000; // 10秒冷卻時間
 
-const ai = new GoogleGenAI({
-	apiKey: process.env.GOOGLE_API_KEY
-});
+// const ai = new GoogleGenAI({
+// 	apiKey: process.env.GOOGLE_API_KEY
+// });
 
 export const getResponse = async (message, conversation = null) => {
 	try {
@@ -37,14 +37,22 @@ export const getResponse = async (message, conversation = null) => {
 			conversation.messages = contents;
 		}
 
-		const response = await ai.models.generateContent({
-			model: "gemini-2.0-flash-lite",
-			contents,
-			generationConfig: {
-				maxOutputTokens: 1024
-			}
+		// const response = await ai.models.generateContent({
+		// 	model: "gemini-2.0-flash-lite",
+		// 	contents,
+		// 	generationConfig: {
+		// 		maxOutputTokens: 1024
+		// 	}
+		// });
+		const result = await fetch(process.env.GEMINI_PROXY_URL, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json"
+			},
+			body: JSON.stringify({ contents })
 		});
 
+		const response = await result.json();
 		const responseText = response.text;
 
 		if (conversation) {

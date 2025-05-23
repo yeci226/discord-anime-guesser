@@ -248,7 +248,7 @@ ${appearanceDisplay}- 相關標籤：${character.rawTags ? [...character.rawTags
 async function handleHintRequest(message, reply, character) {
 	const channelId = message.channel.id;
 	let gameState = channelGameStates.get(channelId) || { hintLevel: 0 };
-	gameState.hintLevel = Math.min(gameState.hintLevel + 1, 4);
+	gameState.hintLevel = Math.min(gameState.hintLevel + 1, 5);
 	channelGameStates.set(channelId, gameState);
 
 	let hintMessage = "🔍 **角色提示**\n\n";
@@ -259,11 +259,7 @@ async function handleHintRequest(message, reply, character) {
 			hintMessage += `- 我出現的年份是：${character.earliestAppearance} - ${character.latestAppearance}\n`;
 			break;
 		case 2:
-			// 第二級提示：提供聲優
-			hintMessage += `- 我的聲優是：${character.animeVAs.join("、")}\n`;
-			break;
-		case 3:
-			// 第三級提示：提供外觀特徵和作品名的一部分
+			// 第二級提示：提供外觀特徵和作品名的一部分
 			if (character.appearanceIds && character.appearanceIds.length > 0) {
 				const validAppearances = character.appearanceIds
 					.filter(id => {
@@ -295,6 +291,10 @@ async function handleHintRequest(message, reply, character) {
 				}
 			}
 			break;
+		case 3: // 第三級提示：提供角色性別
+			if (character.gender) {
+				hintMessage += `- 我的性別是 ${character.gender}\n`;
+			}
 		case 4: // 第四級提示：提供標籤
 			if (character.rawTags && character.rawTags.size > 0) {
 				const tags = [...character.rawTags.keys()];
@@ -303,8 +303,12 @@ async function handleHintRequest(message, reply, character) {
 					.slice(0, Math.min(3, tags.length));
 				hintMessage += `- 與我相關的標籤有：${randomTags.join("、")}\n`;
 			}
+		case 5:
+			// 第五級提示：提供聲優
+			hintMessage += `- 我的聲優是：${character.animeVAs.join("、")}\n`;
+			break;
 		default:
-			// 超過三級提示，提供更明確的線索
+			// 超過五級提示，提供更明確的線索
 			hintMessage += `- 我的名字第一個字是：${(character.nameCn || character.name).charAt(0)}\n`;
 
 			if (character.summary) {
