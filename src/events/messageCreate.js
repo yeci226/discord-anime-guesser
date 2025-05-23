@@ -55,7 +55,6 @@ client.on(Events.MessageCreate, async message => {
 	if (
 		message.author.bot ||
 		message.system ||
-		message.channel.type === ChannelType.DM ||
 		(!isDirectMention && !isReply)
 	) {
 		return;
@@ -149,7 +148,7 @@ client.on(Events.MessageCreate, async message => {
 
 		// 處理跳過命令
 		if (
-			skipCommands.includes(prompt.toLowerCase()) &&
+			skipCommands.some(cmd => cmd === prompt.toLowerCase()) &&
 			conversation.character
 		) {
 			const characterName =
@@ -245,8 +244,15 @@ client.on(Events.MessageCreate, async message => {
 			return;
 		}
 		saveConversation(reply.id, conversation);
-		const responseWithId = `-# #${conversation.conversationId} 我扮演了一位角色。你能猜出我是誰嗎？用「回覆」來問問題或直接猜！輸入「提示」拿線索，「skip」跳過。\n${response}`;
-		await reply.edit({ content: responseWithId });
+		const responseWithId =
+			`-# 我扮演了一位角色。你能猜出我是誰嗎？用「回覆」來問問題或直接猜！輸入「提示」拿線索，「skip」跳過。\n${response}`.slice(
+				0,
+				2000
+			);
+
+		await reply.edit({
+			content: responseWithId
+		});
 	} catch (error) {
 		console.log(error);
 		logger.error(
