@@ -578,13 +578,10 @@ async function getRandomCharacter(gameSettings) {
 						}
 					}
 				);
-				if (
-					!response.data ||
-					!response.data.data ||
-					response.data.data.length === 0
-				) {
+				if (!response || !response.data || !response.data.data) {
+					console.warn("API 回傳格式錯誤或為空", response);
 					throw new Error(
-						"Failed to fetch subject for the selected year"
+						"Empty or invalid response from subject search"
 					);
 				}
 				subject =
@@ -647,7 +644,16 @@ async function getRandomCharacter(gameSettings) {
 		}
 
 		// Get characters for the selected subject
-		const characters = await getCharactersBySubjectId(subject.id);
+		let characters;
+		try {
+			characters = await getCharactersBySubjectId(subject.id);
+		} catch (error) {
+			console.warn(
+				"Skipped subject, because character not found",
+				subject.id
+			);
+			return await getRandomCharacter(gameSettings);
+		}
 
 		// Filter and select characters based on mainCharacterOnly setting
 		const filteredCharacters = gameSettings.mainCharacterOnly
@@ -681,11 +687,7 @@ async function getRandomCharacter(gameSettings) {
 			gameSettings
 		);
 
-		return {
-			...selectedCharacter,
-			...characterDetails,
-			...appearances
-		};
+		return { ...selectedCharacter, ...characterDetails, ...appearances };
 	} catch (error) {
 		console.error("Error getting random character:", error);
 		throw error;
@@ -704,11 +706,7 @@ async function designateCharacter(characterId, gameSettings) {
 		);
 		console.log(characterDetails);
 
-		return {
-			id: characterId,
-			...characterDetails,
-			...appearances
-		};
+		return { id: characterId, ...characterDetails, ...appearances };
 	} catch (error) {
 		console.error("Error getting random character:", error);
 		throw error;
@@ -751,10 +749,7 @@ function generateFeedback(guess, answerCharacter, gameSettings) {
 	} else {
 		ratingFeedback = ratingDiff >= -1 ? "-" : "--";
 	}
-	result.rating = {
-		guess: guess.highestRating,
-		feedback: ratingFeedback
-	};
+	result.rating = { guess: guess.highestRating, feedback: ratingFeedback };
 
 	const sharedAppearances = guess.appearances.filter(appearance =>
 		answerCharacter.appearances.includes(appearance)
@@ -841,10 +836,7 @@ function generateFeedback(guess, answerCharacter, gameSettings) {
 			answerMetaTagsSet.has(tag)
 		);
 
-		result.metaTags = {
-			guess: guess.metaTags,
-			shared: sharedMetaTags
-		};
+		result.metaTags = { guess: guess.metaTags, shared: sharedMetaTags };
 	}
 
 	if (
@@ -917,10 +909,7 @@ async function getIndexInfo(indexId) {
 			throw new Error("No index information found");
 		}
 
-		return {
-			title: response.data.title,
-			total: response.data.total
-		};
+		return { title: response.data.title, total: response.data.total };
 	} catch (error) {
 		if (error.response?.status === 404) {
 			throw new Error("Index not found");

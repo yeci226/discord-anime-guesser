@@ -6,7 +6,9 @@ import {
 } from "./bangumi.js";
 import { Logger } from "./logger.js";
 import { idToTags } from "./id_tags.js";
+import { QuickDB } from "quick.db";
 
+const db = new QuickDB({});
 const logger = new Logger("角色");
 
 const gameSettings = {
@@ -49,6 +51,10 @@ export async function getNewCharacter(guildId) {
 	logger.info(
 		`新題目已生成角色名稱: ${character.name}${character.nameCn ? `（${character.nameCn}）` : ""}`
 	);
+
+	const characterId = character.id;
+	const appearanceCount = (await db.get(`${characterId}_appearances`)) || 0;
+	await db.set(`${characterId}_appearances`, appearanceCount + 1);
 
 	guildCache.set(guildId, character);
 	return character;
